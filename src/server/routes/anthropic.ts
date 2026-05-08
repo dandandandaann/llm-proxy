@@ -1,16 +1,10 @@
 import { Router } from 'express';
 import { MINIMAX_API_KEY, MINIMAX_BASE_URL } from '../config.js';
+import { ProxyError } from '../types.js';
+import { filterHeaders, ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS } from '../utils/proxyUtils.js';
+import { logger } from '../index.js';
 
 export const anthropicRouter = Router();
-
-const ALLOWED_HEADERS = [
-  'content-type',
-  'anthropic-version',
-  'anthropic-beta',
-  'x-api-key',
-];
-
-const TIMEOUT_MS = 60000;
 
 function getAuthHeader(authHeader: string | undefined, xApiKey: string | undefined): string | null {
   let providedKey: string | null = null;
@@ -39,20 +33,14 @@ anthropicRouter.post('/v1/messages', async (req, res) => {
 
   // No auth and no default key
   if (!authHeader) {
-    res.status(401).json({ error: 'Unauthorized: No API key provided' });
+    res.status(401).json({ error: { message: 'Unauthorized: No API key provided', type: 'invalid_request_error', status: 401 } });
     return;
   }
 
   const targetUrl = `${MINIMAX_BASE_URL}/v1/messages`;
 
   // Build headers - only allowed ones
-  const headers: Record<string, string> = {};
-  for (const key of ALLOWED_HEADERS) {
-    const value = req.headers[key.toLowerCase()];
-    if (value) {
-      headers[key] = Array.isArray(value) ? value[0] : value;
-    }
-  }
+  const headers = filterHeaders(req.headers, ANTHROPIC_ALLOWED_HEADERS);
   headers['Authorization'] = authHeader;
 
   const controller = new AbortController();
@@ -71,9 +59,19 @@ anthropicRouter.post('/v1/messages', async (req, res) => {
     // Pass through status
     res.status(fetchRes.status);
 
+    // Forward rate-limit headers from upstream
+    const ratelimitHeaders = ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'];
+    for (const header of ratelimitHeaders) {
+      const value = fetchRes.headers.get(header);
+      if (value) {
+        res.setHeader(header, value);
+      }
+    }
+
     // Stream response back
     if (fetchRes.body) {
-      for await (const chunk of fetchRes.body) {
+      const body = fetchRes.body as unknown as AsyncIterable<Uint8Array>;
+      for await (const chunk of body) {
         res.write(chunk);
       }
       res.end();
@@ -83,9 +81,11 @@ anthropicRouter.post('/v1/messages', async (req, res) => {
   } catch (err: unknown) {
     clearTimeout(timeout);
     if (err instanceof Error && err.name === 'AbortError') {
-      res.status(504).json({ error: 'Gateway Timeout: Minimax API did not respond' });
+      logger.error({ err }, 'Upstream timeout');
+      res.status(504).json({ error: { message: 'Gateway Timeout: Minimax API did not respond', type: 'timeout_error', status: 504 } });
     } else {
-      res.status(502).json({ error: 'Bad Gateway: Could not connect to Minimax' });
+      logger.error({ err }, 'Upstream connection failed');
+      res.status(502).json({ error: { message: 'Bad Gateway: Could not connect to Minimax', type: 'upstream_error', status: 502 } });
     }
   }
 });
