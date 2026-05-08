@@ -54,6 +54,9 @@ const rateLimiter = rateLimit({
 
 const app = express();
 
+// Trust first proxy (for X-Forwarded-For behind reverse proxy)
+app.set("trust proxy", 1);
+
 // Correlation ID middleware
 app.use((req, res, next) => {
   const correlationId =
