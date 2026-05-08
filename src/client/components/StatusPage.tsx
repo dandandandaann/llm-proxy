@@ -9,14 +9,33 @@ function StatusPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isVisible, setIsVisible] = useState(!document.hidden);
 
   useEffect(() => {
-    checkHealth();
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
+    function handleVisibilityChange() {
+      setIsVisible(!document.hidden);
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
+  useEffect(() => {
+    if (isVisible) {
+      checkHealth();
+    }
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (!isVisible) return;
+
+    const interval = setInterval(checkHealth, 30000);
+    return () => clearInterval(interval);
+  }, [isVisible]);
+
   async function checkHealth() {
+    if (!isVisible) return;
+
     try {
       const res = await fetch('/health');
       if (res.ok) {
@@ -67,8 +86,9 @@ function StatusPage() {
       </div>
 
       <div style={{ marginTop: '2rem', backgroundColor: '#16213e', padding: '1.5rem', borderRadius: '8px' }}>
-        <h2 style={{ fontSize: '1rem', marginBottom: '1rem', color: '#888' }}>Proxy Endpoint</h2>
-        <code style={{ color: '#00d4ff' }}>POST /anthropic/v1/messages</code>
+        <h2 style={{ fontSize: '1rem', marginBottom: '1rem', color: '#888' }}>Proxy Endpoints</h2>
+        <code style={{ color: '#00d4ff', display: 'block', marginBottom: '0.5rem' }}>POST /anthropic/v1/messages</code>
+        <code style={{ color: '#00d4ff', display: 'block' }}>POST /v1/chat/completions</code>
       </div>
     </div>
   );
