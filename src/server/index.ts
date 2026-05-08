@@ -13,25 +13,26 @@ import { openaiRouter } from "./routes/openai.js";
 const logflareApiKey = process.env.LOGFLARE_API_KEY;
 const logflareSourceToken = process.env.LOGFLARE_SOURCE_TOKEN;
 
-let loggerOptions: pino.LoggerOptions;
+let logger: pino.Logger;
 
 if (logflareApiKey && logflareSourceToken) {
-  loggerOptions = {
-    level: "info",
-    transport: {
-      target: "pino-logflare",
-      options: { apiKey: logflareApiKey, sourceToken: logflareSourceToken },
+  const transport = pino.transport({
+    target: "pino-logflare",
+    options: {
+      apiKey: logflareApiKey,
+      sourceToken: logflareSourceToken,
     },
-  };
+  });
+  logger = pino({ level: "info" }, transport);
 } else {
-  loggerOptions = {
-    level: "info",
-  };
+  logger = pino({ level: "info" });
 }
 
-export const logger = pino(loggerOptions);
+export { logger };
 
 // Rate limiter middleware
+console.log(parseInt(process.env.RATE_LIMIT_MAX || "100", 10));
+console.log(parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10));
 const rateLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX || "100", 10),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10), // 15 minutes
@@ -79,6 +80,15 @@ app.use(
       if (res.statusCode >= 400) return "warn";
       return "info";
     },
+    customSuccessMessage: (_req, res, _responseTime) => {
+      return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
+    },
+    customErrorMessage: (_req, res, _err) => {
+      return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
+    },
+    customProps: () => ({
+      pid: process.pid,
+    }),
     serializers: {
       req: (req: {
         id: number;
@@ -108,16 +118,10 @@ app.use(
           "ratelimit-limit": res.headers["x-ratelimit-limit"] as
             | string
             | undefined,
-          "ratelimit-policy": res.headers["x-ratelimit-policy"] as
-            | string
-            | undefined,
           "ratelimit-remaining": res.headers["x-ratelimit-remaining"] as
             | string
             | undefined,
           "ratelimit-reset": res.headers["x-ratelimit-reset"] as
-            | string
-            | undefined,
-          "referrer-policy": res.headers["referrer-policy"] as
             | string
             | undefined,
           "strict-transport-security": res.headers[
@@ -126,9 +130,6 @@ app.use(
           "x-correlation-id": res.headers["x-correlation-id"] as
             | string
             | undefined,
-          "x-permitted-cross-domain-policies": res.headers[
-            "x-permitted-cross-domain-policies"
-          ] as string | undefined,
         },
       }),
     },
@@ -143,7 +144,7 @@ app.get("/health", (_req, res) => {
 
 // Proxy routes
 app.use("/anthropic", anthropicRouter);
-app.use("/", openaiRouter);
+app.use("/openai", openaiRouter);
 
 // Error handling
 app.use(notFoundHandler);
@@ -156,9 +157,7 @@ const server = app.listen(PORT, () => {
 
 // Graceful shutdown handler
 const shutdown = () => {
-  console.log("Shutting down gracefully...");
   server.close(() => {
-    console.log("Shutdown complete");
     process.exit(0);
   });
 };
