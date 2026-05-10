@@ -1,6 +1,7 @@
 import express from "express";
 import pinoHttp from "pino-http";
 import pino from "pino";
+import { Writable } from "stream";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { PORT } from "./config.js";
@@ -8,6 +9,7 @@ import { corsMiddleware } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { anthropicRouter } from "./routes/anthropic.js";
 import { openaiRouter } from "./routes/openai.js";
+import { HttpClient } from "logflare-transport-core";
 
 // Create logger - defaults to stdout JSON, or Logflare if configured
 const logflareApiKey = process.env.LOGFLARE_API_KEY;
@@ -16,14 +18,67 @@ const logflareSourceToken = process.env.LOGFLARE_SOURCE_TOKEN;
 let logger: pino.Logger;
 
 if (logflareApiKey && logflareSourceToken) {
-  const transport = pino.transport({
-    target: "pino-logflare",
-    options: {
-      apiKey: logflareApiKey,
-      sourceToken: logflareSourceToken,
+  // Direct Logflare client
+  const logflareClient = new HttpClient({
+    apiKey: logflareApiKey,
+    sourceToken: logflareSourceToken,
+  });
+
+  // Tee: log to console + send flat payload to Logflare
+  const teedTransport = new Writable({
+    objectMode: true,
+    write(chunk, _encoding, cb) {
+      const parsed = typeof chunk === "string" ? JSON.parse(chunk) : chunk;
+      console.log(parsed.event_message || parsed.msg);
+      console.log(JSON.stringify(parsed, null, 2));
+
+      // Build ordered payload for Logflare with grouped objects
+      const {
+        event_message,
+        time,
+        level,
+        request,
+        remote,
+        content,
+        usage,
+        headers,
+        // Exclude these
+        msg,
+        metadata,
+        pid,
+        remotePort,
+        remoteAddress,
+        id,
+        requestId,
+        status,
+        method,
+        endpoint,
+        input,
+        output,
+        model,
+        event,
+        host,
+        timestamp,
+        ...rest
+      } = parsed;
+
+      const orderedPayload = {
+        event_message,
+        time,
+        level,
+        request,
+        remote,
+        content,
+        usage,
+        headers,
+        ...rest,
+      };
+
+      logflareClient.postLogEvents([orderedPayload]);
+      cb();
     },
   });
-  logger = pino({ level: "info" }, transport);
+  logger = pino({ level: "info" }, teedTransport);
 } else {
   logger = pino({ level: "info" });
 }
@@ -31,8 +86,6 @@ if (logflareApiKey && logflareSourceToken) {
 export { logger };
 
 // Rate limiter middleware
-console.log(parseInt(process.env.RATE_LIMIT_MAX || "100", 10));
-console.log(parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10));
 const rateLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX || "100", 10),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10), // 15 minutes
@@ -75,20 +128,18 @@ app.use(helmet());
 app.use(
   pinoHttp({
     logger,
+    autoLogging: false,
     customLogLevel: (_req, res, err) => {
       if (res.statusCode >= 500 || err) return "error";
       if (res.statusCode >= 400) return "warn";
       return "info";
     },
     customSuccessMessage: (_req, res, _responseTime) => {
-      return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
+      return `${res.statusCode} - ${res.req.method} ${_req.baseUrl}${_req.url}`;
     },
     customErrorMessage: (_req, res, _err) => {
-      return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
+      return `${res.statusCode} - ${res.req.method} ${res.req.route}`;
     },
-    customProps: () => ({
-      pid: process.pid,
-    }),
     serializers: {
       req: (req: {
         id: number;

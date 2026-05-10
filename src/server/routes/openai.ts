@@ -1,17 +1,8 @@
 import { Router } from "express";
 import { MINIMAX_API_KEY } from "../config.js";
-import { ProxyError } from "../types.js";
-import {
-  filterHeaders,
-  ALLOWED_HEADERS,
-  ANTHROPIC_ALLOWED_HEADERS,
-  TIMEOUT_MS,
-} from "../utils/proxyUtils.js";
-import {
-  extractOpenAIStreamingInfo,
-  logStreamingResponse,
-} from "../utils/streamLogger.js";
-import { logger } from "../index.js";
+import { ALLOWED_HEADERS } from "../utils/proxyUtils.js";
+import { extractOpenAIStreamingInfo } from "../utils/streamLogger.js";
+import { createProxyHandler } from "../utils/proxyLogger.js";
 
 export const openaiRouter = Router();
 
@@ -21,12 +12,10 @@ function getAuthHeader(authHeader: string | undefined): string | null {
     providedKey = authHeader.substring(7);
   }
 
-  // Use the provided key if it looks like a valid Minimax key
   if (providedKey && providedKey.startsWith("sk-cp")) {
     return `Bearer ${providedKey}`;
   }
 
-  // Fallback to the environment configuration
   if (MINIMAX_API_KEY) {
     return `Bearer ${MINIMAX_API_KEY}`;
   }
@@ -48,77 +37,46 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
     return;
   }
 
-  const targetUrl = "https://api.minimax.io/v1/chat/completions";
-
-  const headers = filterHeaders(req.headers, ALLOWED_HEADERS);
-  headers["Authorization"] = authHeader;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  try {
-    const fetchRes = await fetch(targetUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(req.body),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-    res.status(fetchRes.status);
-
-    // Forward rate-limit headers from upstream
-    const ratelimitHeaders = [
-      "x-ratelimit-limit",
-      "x-ratelimit-remaining",
-      "x-ratelimit-reset",
-    ];
-    for (const header of ratelimitHeaders) {
-      const value = fetchRes.headers.get(header);
-      if (value) {
-        res.setHeader(header, value);
-      }
-    }
-
-    // Log response status based on status code
-    const logLevel =
-      fetchRes.status >= 500
-        ? "error"
-        : fetchRes.status >= 400
-          ? "warn"
-          : "info";
-    logger[logLevel](
-      {
-        endpoint: "/v1/chat/completions",
-        status: fetchRes.status,
-        statusText: fetchRes.statusText,
-      },
-      `${fetchRes.status} - ${fetchRes.statusText}`,
-    );
-
-    if (fetchRes.body) {
-      const chunks: string[] = [];
-      const body = fetchRes.body as unknown as AsyncIterable<Uint8Array>;
-      for await (const chunk of body) {
-        const text = new TextDecoder().decode(chunk);
-        chunks.push(text);
-        res.write(chunk);
-      }
-      res.end();
-
-      // Log streaming response info
+  const handler = createProxyHandler({
+    targetUrl: "https://api.minimax.io/v1/chat/completions",
+    allowedHeaders: ALLOWED_HEADERS,
+    authHeader,
+    endpoint: "/v1/chat/completions",
+    extractStreamingInfo: (chunks: string[], reqBody?: Record<string, unknown>) => {
       const info = extractOpenAIStreamingInfo(chunks);
-      logStreamingResponse("/v1/chat/completions", info);
-    } else {
-      res.end();
-    }
-  } catch (err: unknown) {
-    clearTimeout(timeout);
-    logger.error({ err }, "Runtime error");
-  }
+
+      // Extract user prompt from messages array
+      let input: string | undefined;
+      if (reqBody && Array.isArray(reqBody.messages)) {
+        const messages = reqBody.messages as Array<{ role: string; content: string }>;
+        // Find last user message
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === "user") {
+            input = messages[i].content;
+            break;
+          }
+        }
+      }
+
+      return {
+        input,
+        content: info.content,
+        contentSnippet: info.contentSnippet,
+        id: info.id,
+        object: info.object,
+        created: info.created,
+        model: info.model,
+        finishReason: info.finishReason,
+        stopSequence: info.stopSequence,
+        usage: info.usage,
+      };
+    },
+  });
+
+  await handler(req, res);
 });
 
-openaiRouter.get("/v1/models", (req, res) => {
+openaiRouter.get("/v1/models", (_req, res) => {
   res.json({
     object: "list",
     data: [

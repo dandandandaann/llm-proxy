@@ -2,22 +2,10 @@
  * Shared proxy utility functions and constants
  */
 
-// Allowed headers for OpenAI route
-export const ALLOWED_HEADERS = ['content-type'];
+import { ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS, KEY_PREFIX } from '../config.js';
 
-// Allowed headers for Anthropic route
-export const ANTHROPIC_ALLOWED_HEADERS = [
-  'content-type',
-  'anthropic-version',
-  'anthropic-beta',
-  'x-api-key',
-];
-
-// Request timeout in milliseconds
-export const TIMEOUT_MS = 60000;
-
-// Key prefix for valid API keys
-export const KEY_PREFIX = 'sk-cp';
+// Re-export for backwards compatibility
+export { ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS, KEY_PREFIX };
 
 /**
  * Filter request headers based on an allowed list.
