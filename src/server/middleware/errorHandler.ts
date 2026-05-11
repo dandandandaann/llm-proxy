@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { logger } from "../index.js";
+// import { logger } from "../index.js";
 
 export interface AppError extends Error {
   statusCode?: number;
@@ -25,16 +25,16 @@ export function errorHandler(
 
   // Log error with redacted auth header via pino (goes to Logflare)
   const authHeader = req.headers.authorization;
-  logger.error(
-    {
-      req: {
-        method: req.method,
-        url: req.path,
-        headers: { authorization: redactAuthHeader(authHeader) },
-      },
-    },
-    `[ERROR] ${req.method} ${req.path} - ${statusCode} - ${message}`,
-  );
+  //   logger.error(
+  //     {
+  //       req: {
+  //         method: req.method,
+  //         url: req.path,
+  //         headers: { authorization: redactAuthHeader(authHeader) },
+  //       },
+  //     },
+  //     `[ERROR] ${req.method} ${req.path} - ${statusCode} - ${message}`,
+  //   );
 
   res.status(statusCode).json({
     error: message,

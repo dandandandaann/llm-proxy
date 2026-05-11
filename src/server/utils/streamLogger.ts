@@ -3,9 +3,9 @@
  * for logging purposes.
  */
 
-import { logger } from "../index.js";
+import { logger } from "./logger.js";
 
-// Maximum characters to log from response content
+// Maximum characters to log from response content (for fallback/trimming)
 const MAX_CONTENT_LOG = 500;
 
 // OpenAI completion tracking
@@ -22,6 +22,8 @@ interface OpenAIPartialResponse {
 // Anthropic event tracking
 interface AnthropicPartialResponse {
   content: string;
+  model: string | null;
+  stopReason: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
 }
@@ -46,11 +48,21 @@ function parseSSEData(line: string): Record<string, unknown> | null {
  */
 export function extractAnthropicStreamingInfo(buffer: string): {
   contentSnippet: string;
+  model: string | null;
+  stopReason: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
 } {
-  const partial: AnthropicPartialResponse = {
+  const partial: {
+    content: string;
+    model: string | null;
+    stopReason: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+  } = {
     content: "",
+    model: null,
+    stopReason: null,
     inputTokens: null,
     outputTokens: null,
   };
@@ -62,11 +74,11 @@ export function extractAnthropicStreamingInfo(buffer: string): {
 
     const type = data.type as string;
 
+    // Capture model from message_start
     if (type === "message_start") {
       const msg = data.message as Record<string, unknown>;
-      const usage = msg.usage as Record<string, number> | undefined;
-      if (usage) {
-        partial.inputTokens = usage.input_tokens ?? null;
+      if (msg.model && !partial.model) {
+        partial.model = msg.model as string;
       }
     }
 
@@ -78,18 +90,29 @@ export function extractAnthropicStreamingInfo(buffer: string): {
     }
 
     if (type === "message_delta") {
-      const usage = data.usage as Record<string, number> | undefined;
+      const msg = data.message as Record<string, unknown>;
+      const usage = msg.usage as Record<string, number> | undefined;
+      const stopReason = msg.stop_reason as string | undefined;
+
+      // Capture stop reason
+      if (stopReason && !partial.stopReason) {
+        partial.stopReason = stopReason;
+      }
+
+      // Capture usage
       if (usage) {
+        if (partial.inputTokens === null && usage.input_tokens !== undefined) {
+          partial.inputTokens = usage.input_tokens;
+        }
         partial.outputTokens = usage.output_tokens ?? null;
       }
     }
   }
 
-  // Get last 500 chars
-  const contentSnippet = partial.content.slice(-MAX_CONTENT_LOG);
-
   return {
-    contentSnippet,
+    contentSnippet: partial.content,
+    model: partial.model,
+    stopReason: partial.stopReason,
     inputTokens: partial.inputTokens,
     outputTokens: partial.outputTokens,
   };
@@ -102,6 +125,13 @@ export function extractAnthropicStreamingInfo(buffer: string): {
 export function extractOpenAIStreamingInfo(chunks: string[]): {
   contentSnippet: string;
   finishReason: string | null;
+  model: string | null;
+  toolCalls: Array<{
+    index: number;
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+  }>;
   usage: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -110,6 +140,13 @@ export function extractOpenAIStreamingInfo(chunks: string[]): {
 } {
   let content = "";
   let finishReason: string | null = null;
+  let model: string | null = null;
+  const toolCalls: Array<{
+    index: number;
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+  }> = [];
   let usage: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -122,10 +159,32 @@ export function extractOpenAIStreamingInfo(chunks: string[]): {
       const choice = chunk.choices?.[0];
       if (!choice) continue;
 
+      // Capture model from first chunk
+      if (!model && chunk.model) {
+        model = chunk.model;
+      }
+
       // Accumulate content
       const delta = choice.delta;
-      if (delta && typeof delta === "object" && delta.content) {
-        content += delta.content;
+      if (delta && typeof delta === "object") {
+        if (typeof delta.content === "string") {
+          content += delta.content;
+        }
+
+        // Extract tool calls
+        if (Array.isArray(delta.tool_calls)) {
+          for (const tc of delta.tool_calls) {
+            toolCalls.push({
+              index: tc.index ?? 0,
+              id: tc.id ?? "",
+              type: tc.type ?? "function",
+              function: {
+                name: tc.function?.name ?? "",
+                arguments: tc.function?.arguments ?? "",
+              },
+            });
+          }
+        }
       }
 
       // Track finish reason
@@ -147,20 +206,34 @@ export function extractOpenAIStreamingInfo(chunks: string[]): {
   }
 
   return {
-    contentSnippet: content.slice(-MAX_CONTENT_LOG),
+    contentSnippet: content,
     finishReason,
+    model,
+    toolCalls,
     usage,
   };
 }
 
 /**
- * Log streaming response info (last 500 chars of content + usage)
+ * Log streaming response info combined with HTTP details.
+ * Single log entry per request with all data.
  */
 export function logStreamingResponse(
+  status: number,
+  method: string,
   endpoint: string,
+  responseTime: number,
   responseInfo: {
     contentSnippet: string;
+    model?: string | null;
     finishReason?: string | null;
+    toolCalls?: Array<{
+      index: number;
+      id: string;
+      type: string;
+      function: { name: string; arguments: string };
+    }>;
+    stopReason?: string | null;
     inputTokens?: number | null;
     outputTokens?: number | null;
     usage?: {
@@ -168,18 +241,33 @@ export function logStreamingResponse(
       completion_tokens: number;
       total_tokens: number;
     } | null;
+    reqHeaders?: Record<string, string | undefined>;
   },
 ) {
+  const logLevel = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
+
+  const timestamp = new Date().toLocaleTimeString();
+
   const logData = {
-    endpoint,
-    contentLength: responseInfo.contentSnippet.length,
-    contentLastChars: responseInfo.contentSnippet || "[empty]",
-    finishReason: responseInfo.finishReason,
+    event_message: `${status} - ${method} ${endpoint}`,
+    timestamp,
+    request: {
+      method,
+      endpoint,
+      headers: responseInfo.reqHeaders,
+    },
+    response: {
+      statusCode: status,
+      model: responseInfo.model ?? "null",
+      finishReason:
+        responseInfo.finishReason ?? responseInfo.stopReason ?? "null",
+      toolCalls: responseInfo.toolCalls?.length ? responseInfo.toolCalls : [],
+    },
     usage: responseInfo.usage ?? {
-      inputTokens: responseInfo.inputTokens,
-      outputTokens: responseInfo.outputTokens,
+      inputTokens: responseInfo.inputTokens ?? "null",
+      outputTokens: responseInfo.outputTokens ?? "null",
     },
   };
 
-  logger.info(logData, "Streaming response logged");
+  logger[logLevel](logData, logData.event_message);
 }

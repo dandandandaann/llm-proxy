@@ -1,34 +1,22 @@
 import express from "express";
 import pinoHttp from "pino-http";
-import pino from "pino";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import { logger } from "./utils/logger.js";
 import { PORT } from "./config.js";
 import { corsMiddleware } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { anthropicRouter } from "./routes/anthropic.js";
 import { openaiRouter } from "./routes/openai.js";
 
-// Create logger - defaults to stdout JSON, or Logflare if configured
-const logflareApiKey = process.env.LOGFLARE_API_KEY;
-const logflareSourceToken = process.env.LOGFLARE_SOURCE_TOKEN;
-
-let logger: pino.Logger;
-
-if (logflareApiKey && logflareSourceToken) {
-  const transport = pino.transport({
-    target: "pino-logflare",
-    options: {
-      apiKey: logflareApiKey,
-      sourceToken: logflareSourceToken,
-    },
-  });
-  logger = pino({ level: "info" }, transport);
-} else {
-  logger = pino({ level: "info" });
+// Extend Express Request to include startTime
+declare global {
+  namespace Express {
+    interface Request {
+      startTime?: number;
+    }
+  }
 }
-
-export { logger };
 
 // Rate limiter middleware
 console.log(parseInt(process.env.RATE_LIMIT_MAX || "100", 10));
@@ -72,9 +60,16 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(corsMiddleware);
 app.use(helmet());
-app.use(
-  pinoHttp({
-    logger,
+app.use((req, res, next) => {
+  // Track request start time for response duration calculation
+  req.startTime = Date.now();
+  next();
+});
+app.use(pinoHttp({
+  logger,
+  autoLogging: false, // We log manually with combined data
+  quietReqLogger: true,
+  quietResLogger: true,
     customLogLevel: (_req, res, err) => {
       if (res.statusCode >= 500 || err) return "error";
       if (res.statusCode >= 400) return "warn";
@@ -132,6 +127,15 @@ app.use(
             | undefined,
         },
       }),
+    },
+    formatters: {
+      log: (obj: Record<string, unknown>) => {
+        if (obj.metadata) {
+          const { metadata, ...rest } = obj;
+          return { ...rest, ...(metadata as Record<string, unknown>) };
+        }
+        return obj;
+      },
     },
   }),
 );

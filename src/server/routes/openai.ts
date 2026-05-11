@@ -1,41 +1,21 @@
 import { Router } from "express";
-import { MINIMAX_API_KEY } from "../config.js";
-import { ProxyError } from "../types.js";
 import {
   filterHeaders,
   ALLOWED_HEADERS,
-  ANTHROPIC_ALLOWED_HEADERS,
+  forwardRateLimitHeaders,
   TIMEOUT_MS,
 } from "../utils/proxyUtils.js";
+import { getAuthHeader } from "../utils/authUtils.js";
 import {
   extractOpenAIStreamingInfo,
   logStreamingResponse,
 } from "../utils/streamLogger.js";
-import { logger } from "../index.js";
+import { logger } from "../utils/logger.js";
 
 export const openaiRouter = Router();
 
-function getAuthHeader(authHeader: string | undefined): string | null {
-  let providedKey: string | null = null;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    providedKey = authHeader.substring(7);
-  }
-
-  // Use the provided key if it looks like a valid Minimax key
-  if (providedKey && providedKey.startsWith("sk-cp")) {
-    return `Bearer ${providedKey}`;
-  }
-
-  // Fallback to the environment configuration
-  if (MINIMAX_API_KEY) {
-    return `Bearer ${MINIMAX_API_KEY}`;
-  }
-
-  return null;
-}
-
 openaiRouter.post("/v1/chat/completions", async (req, res) => {
-  const authHeader = getAuthHeader(req.headers.authorization);
+  const authHeader = getAuthHeader({ authHeader: req.headers.authorization });
 
   if (!authHeader) {
     res.status(401).json({
@@ -67,34 +47,7 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
     clearTimeout(timeout);
     res.status(fetchRes.status);
 
-    // Forward rate-limit headers from upstream
-    const ratelimitHeaders = [
-      "x-ratelimit-limit",
-      "x-ratelimit-remaining",
-      "x-ratelimit-reset",
-    ];
-    for (const header of ratelimitHeaders) {
-      const value = fetchRes.headers.get(header);
-      if (value) {
-        res.setHeader(header, value);
-      }
-    }
-
-    // Log response status based on status code
-    const logLevel =
-      fetchRes.status >= 500
-        ? "error"
-        : fetchRes.status >= 400
-          ? "warn"
-          : "info";
-    logger[logLevel](
-      {
-        endpoint: "/v1/chat/completions",
-        status: fetchRes.status,
-        statusText: fetchRes.statusText,
-      },
-      `${fetchRes.status} - ${fetchRes.statusText}`,
-    );
+    forwardRateLimitHeaders(fetchRes, res);
 
     if (fetchRes.body) {
       const chunks: string[] = [];
@@ -106,15 +59,50 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
       }
       res.end();
 
-      // Log streaming response info
       const info = extractOpenAIStreamingInfo(chunks);
-      logStreamingResponse("/v1/chat/completions", info);
+      logStreamingResponse(
+        fetchRes.status,
+        req.method,
+        "/v1/chat/completions",
+        Date.now() - (req.startTime ?? Date.now()),
+        {
+          ...info,
+          reqHeaders: {
+            "x-correlation-id": req.headers["x-correlation-id"] as
+              | string
+              | undefined,
+            "content-type": req.headers["content-type"] as string | undefined,
+            "user-agent": req.headers["user-agent"] as string | undefined,
+          },
+        },
+      );
     } else {
       res.end();
+      logStreamingResponse(
+        fetchRes.status,
+        req.method,
+        "/v1/chat/completions",
+        Date.now() - (req.startTime ?? Date.now()),
+        {
+          contentSnippet: "",
+          reqHeaders: {
+            "x-correlation-id": req.headers["x-correlation-id"] as
+              | string
+              | undefined,
+            "content-type": req.headers["content-type"] as string | undefined,
+            "user-agent": req.headers["user-agent"] as string | undefined,
+          },
+        },
+      );
     }
   } catch (err: unknown) {
     clearTimeout(timeout);
-    logger.error({ err }, "Runtime error");
+    const responseTime = Date.now() - (req.startTime ?? Date.now());
+    logger.error({
+      event_message: `500 - ${req.method} /v1/chat/completions`,
+      responseTime,
+      err,
+    });
   }
 });
 

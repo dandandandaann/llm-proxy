@@ -1,50 +1,25 @@
 import { Router } from "express";
-import { MINIMAX_API_KEY, MINIMAX_BASE_URL } from "../config.js";
-import { ProxyError } from "../types.js";
+import { MINIMAX_BASE_URL } from "../config.js";
 import {
   filterHeaders,
-  ALLOWED_HEADERS,
   ANTHROPIC_ALLOWED_HEADERS,
+  forwardRateLimitHeaders,
   TIMEOUT_MS,
 } from "../utils/proxyUtils.js";
+import { getAuthHeader } from "../utils/authUtils.js";
 import {
   extractAnthropicStreamingInfo,
   logStreamingResponse,
 } from "../utils/streamLogger.js";
-import { logger } from "../index.js";
+import { logger } from "../utils/logger.js";
 
 export const anthropicRouter = Router();
 
-function getAuthHeader(
-  authHeader: string | undefined,
-  xApiKey: string | undefined,
-): string | null {
-  let providedKey: string | null = null;
-
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    providedKey = authHeader.substring(7);
-  } else if (xApiKey) {
-    providedKey = xApiKey;
-  }
-
-  // Use the provided key only if it looks like a valid Minimax key
-  if (providedKey && providedKey.startsWith("sk-cp")) {
-    return `Bearer ${providedKey}`;
-  }
-
-  // Fallback to the environment configuration
-  if (MINIMAX_API_KEY) {
-    return `Bearer ${MINIMAX_API_KEY}`;
-  }
-
-  return null;
-}
-
 anthropicRouter.post("/v1/messages", async (req, res) => {
-  const authHeader = getAuthHeader(
-    req.headers.authorization,
-    req.headers["x-api-key"] as string,
-  );
+  const authHeader = getAuthHeader({
+    authHeader: req.headers.authorization,
+    xApiKey: req.headers["x-api-key"] as string,
+  });
 
   // No auth and no default key
   if (!authHeader) {
@@ -76,38 +51,9 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
     });
 
     clearTimeout(timeout);
-
-    // Pass through status
     res.status(fetchRes.status);
 
-    // Forward rate-limit headers from upstream
-    const ratelimitHeaders = [
-      "x-ratelimit-limit",
-      "x-ratelimit-remaining",
-      "x-ratelimit-reset",
-    ];
-    for (const header of ratelimitHeaders) {
-      const value = fetchRes.headers.get(header);
-      if (value) {
-        res.setHeader(header, value);
-      }
-    }
-
-    // Log response status based on status code
-    const logLevel =
-      fetchRes.status >= 500
-        ? "error"
-        : fetchRes.status >= 400
-          ? "warn"
-          : "info";
-    logger[logLevel](
-      {
-        endpoint: "/anthropic/v1/messages",
-        status: fetchRes.status,
-        statusText: fetchRes.statusText,
-      },
-      `${fetchRes.status} - ${fetchRes.statusText}`,
-    );
+    forwardRateLimitHeaders(fetchRes, res);
 
     // Stream response back
     if (fetchRes.body) {
@@ -120,19 +66,54 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
       }
       res.end();
 
-      // Log streaming response info
       const info = extractAnthropicStreamingInfo(buffer);
-      logStreamingResponse("/anthropic/v1/messages", {
-        contentSnippet: info.contentSnippet,
-        inputTokens: info.inputTokens,
-        outputTokens: info.outputTokens,
-      });
+      logStreamingResponse(
+        fetchRes.status,
+        req.method,
+        "/anthropic/v1/messages",
+        Date.now() - (req.startTime ?? Date.now()),
+        {
+          contentSnippet: info.contentSnippet,
+          model: info.model,
+          stopReason: info.stopReason,
+          inputTokens: info.inputTokens,
+          outputTokens: info.outputTokens,
+          reqHeaders: {
+            "x-correlation-id": req.headers["x-correlation-id"] as
+              | string
+              | undefined,
+            "content-type": req.headers["content-type"] as string | undefined,
+            "user-agent": req.headers["user-agent"] as string | undefined,
+          },
+        },
+      );
     } else {
       res.end();
+      logStreamingResponse(
+        fetchRes.status,
+        req.method,
+        "/anthropic/v1/messages",
+        Date.now() - (req.startTime ?? Date.now()),
+        {
+          contentSnippet: "",
+          reqHeaders: {
+            "x-correlation-id": req.headers["x-correlation-id"] as
+              | string
+              | undefined,
+            "content-type": req.headers["content-type"] as string | undefined,
+            "user-agent": req.headers["user-agent"] as string | undefined,
+          },
+        },
+      );
     }
   } catch (err: unknown) {
     clearTimeout(timeout);
-    logger.error({ err }, "Runtime error");
+    const responseTime = Date.now() - (req.startTime ?? Date.now());
+    logger.error({
+      event_message: `500 - ${req.method} /anthropic/v1/messages`,
+      responseTime,
+      err,
+    });
   }
 });
 
