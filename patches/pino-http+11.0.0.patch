@@ -1,0 +1,12 @@
+diff --git a/node_modules/pino-http/tsconfig.json b/node_modules/pino-http/tsconfig.json
+index 6e66603..f9f989d 100644
+--- a/node_modules/pino-http/tsconfig.json
++++ b/node_modules/pino-http/tsconfig.json
+@@ -7,6 +7,7 @@
+     "noEmit": true,
+     "strict": true,
+     "moduleResolution": "node",
++    "ignoreDeprecations": "6.0"
+   },
+   "include": [
+     "./*.test-d.ts",

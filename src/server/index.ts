@@ -1,37 +1,23 @@
 import express from "express";
 import pinoHttp from "pino-http";
-import pino from "pino";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import { logger } from "./utils/logger.js";
 import { PORT } from "./config.js";
 import { corsMiddleware } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { anthropicRouter } from "./routes/anthropic.js";
 import { openaiRouter } from "./routes/openai.js";
 
-// Create logger - defaults to stdout JSON, or Logflare if configured
-const logflareApiKey = process.env.LOGFLARE_API_KEY;
-const logflareSourceToken = process.env.LOGFLARE_SOURCE_TOKEN;
-
-let loggerOptions: pino.LoggerOptions;
-
-if (logflareApiKey && logflareSourceToken) {
-  loggerOptions = {
-    level: "info",
-    transport: {
-      target: "pino-logflare",
-      options: { apiKey: logflareApiKey, sourceToken: logflareSourceToken },
-    },
-  };
-} else {
-  loggerOptions = {
-    level: "info",
-  };
+// Extend Express Request to include startTime
+declare global {
+  namespace Express {
+    interface Request {
+      startTime?: number;
+    }
+  }
 }
 
-export const logger = pino(loggerOptions);
-
-// Rate limiter middleware
 const rateLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX || "100", 10),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10), // 15 minutes
@@ -71,14 +57,29 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(corsMiddleware);
 app.use(helmet());
+app.use((req, res, next) => {
+  req.startTime = Date.now();
+  next();
+});
 app.use(
   pinoHttp({
     logger,
+    autoLogging: false,
+    quietReqLogger: true,
+    quietResLogger: true,
+    timestamp: false,
     customLogLevel: (_req, res, err) => {
       if (res.statusCode >= 500 || err) return "error";
       if (res.statusCode >= 400) return "warn";
       return "info";
     },
+    customSuccessMessage: (_req, res, _responseTime) => {
+      return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
+    },
+    customErrorMessage: (_req, res, _err) => {
+      return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
+    },
+    customProps: () => ({}),
     serializers: {
       req: (req: {
         id: number;
@@ -93,44 +94,23 @@ app.use(
         url: req.url,
         remoteAddress: req.remoteAddress,
         remotePort: req.remotePort,
-        headers: {
-          "x-correlation-id": req.headers["x-correlation-id"] as
-            | string
-            | undefined,
-          "content-type": req.headers["content-type"] as string | undefined,
-          "user-agent": req.headers["user-agent"] as string | undefined,
-          host: req.headers.host as string | undefined,
-        },
       }),
       res: (res: { statusCode: number; headers: Record<string, unknown> }) => ({
         statusCode: res.statusCode,
-        headers: {
-          "ratelimit-limit": res.headers["x-ratelimit-limit"] as
-            | string
-            | undefined,
-          "ratelimit-policy": res.headers["x-ratelimit-policy"] as
-            | string
-            | undefined,
-          "ratelimit-remaining": res.headers["x-ratelimit-remaining"] as
-            | string
-            | undefined,
-          "ratelimit-reset": res.headers["x-ratelimit-reset"] as
-            | string
-            | undefined,
-          "referrer-policy": res.headers["referrer-policy"] as
-            | string
-            | undefined,
-          "strict-transport-security": res.headers[
-            "strict-transport-security"
-          ] as string | undefined,
-          "x-correlation-id": res.headers["x-correlation-id"] as
-            | string
-            | undefined,
-          "x-permitted-cross-domain-policies": res.headers[
-            "x-permitted-cross-domain-policies"
-          ] as string | undefined,
-        },
       }),
+    },
+    formatters: {
+      log: (obj: Record<string, unknown>) => {
+        if (obj.metadata) {
+          const { metadata, ...rest } = obj;
+          return { ...rest, ...(metadata as Record<string, unknown>) };
+        }
+        return obj;
+      },
+    },
+    redact: {
+      paths: ["timestamp"],
+      remove: true,
     },
   }),
 );
@@ -143,7 +123,7 @@ app.get("/health", (_req, res) => {
 
 // Proxy routes
 app.use("/anthropic", anthropicRouter);
-app.use("/", openaiRouter);
+app.use("/openai", openaiRouter);
 
 // Error handling
 app.use(notFoundHandler);
@@ -156,9 +136,7 @@ const server = app.listen(PORT, () => {
 
 // Graceful shutdown handler
 const shutdown = () => {
-  console.log("Shutting down gracefully...");
   server.close(() => {
-    console.log("Shutdown complete");
     process.exit(0);
   });
 };
