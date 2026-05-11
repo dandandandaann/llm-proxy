@@ -69,6 +69,7 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
       const info = extractAnthropicStreamingInfo(buffer);
       logStreamingResponse(
         fetchRes.status,
+        fetchRes.statusText,
         req.method,
         "/anthropic/v1/messages",
         Date.now() - (req.startTime ?? Date.now()),
@@ -92,6 +93,7 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
       res.end();
       logStreamingResponse(
         fetchRes.status,
+        fetchRes.statusText,
         req.method,
         "/anthropic/v1/messages",
         Date.now() - (req.startTime ?? Date.now()),

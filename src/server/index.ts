@@ -61,16 +61,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(corsMiddleware);
 app.use(helmet());
 app.use((req, res, next) => {
-  // Track request start time for response duration calculation
   req.startTime = Date.now();
   next();
 });
-app.use(pinoHttp({
+app.use(
+  pinoHttp({
     logger,
-    autoLogging: false, // We log manually with combined data
+    autoLogging: false,
     quietReqLogger: true,
     quietResLogger: true,
-    timestamp: false, // We use logTime instead
+    timestamp: false,
     customLogLevel: (_req, res, err) => {
       if (res.statusCode >= 500 || err) return "error";
       if (res.statusCode >= 400) return "warn";
@@ -110,6 +110,10 @@ app.use(pinoHttp({
         }
         return obj;
       },
+    },
+    redact: {
+      paths: ["timestamp"],
+      remove: true,
     },
   }),
 );

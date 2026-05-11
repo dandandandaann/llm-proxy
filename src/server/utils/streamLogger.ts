@@ -294,6 +294,7 @@ export function extractOpenAIStreamingInfo(chunks: string[]): {
  */
 export function logStreamingResponse(
   status: number,
+  statusText: string,
   method: string,
   endpoint: string,
   responseTime: number,
@@ -345,14 +346,10 @@ export function logStreamingResponse(
       method,
       endpoint,
     },
-    userInput: lastUserMessage
-      ? { message: lastUserMessage }
-      : undefined,
+    userInput: lastUserMessage ? { message: lastUserMessage } : undefined,
     response: {
       statusCode: status,
-      model: responseInfo.model ?? "null",
-      finishReason:
-        responseInfo.finishReason ?? responseInfo.stopReason ?? "null",
+      statusMessage: statusText,
       contentSnippet:
         responseInfo.contentSnippet.length > MAX_CONTENT_LOG
           ? responseInfo.contentSnippet.slice(-MAX_CONTENT_LOG)
@@ -362,6 +359,9 @@ export function logStreamingResponse(
         : undefined,
     },
     usage: responseInfo.usage ?? {
+      model: responseInfo.model ?? "null",
+      finishReason:
+        responseInfo.finishReason ?? responseInfo.stopReason ?? "null",
       inputTokens: responseInfo.inputTokens ?? "null",
       outputTokens: responseInfo.outputTokens ?? "null",
     },

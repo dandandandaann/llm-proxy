@@ -13,7 +13,6 @@ if (logflareApiKey && logflareSourceToken) {
   const stream = createWriteStream({
     apiKey: logflareApiKey,
     sourceToken: logflareSourceToken,
-
     onPreparePayload: (payload, meta) => {
       const item = defaultPreparePayload(payload, meta) as {
         message?: string;
@@ -21,10 +20,11 @@ if (logflareApiKey && logflareSourceToken) {
           context?: { host?: string; pid?: string };
           level?: string;
           logTime?: string;
+          timestamp?: string;
           [key: string]: unknown;
         };
       };
-      // Filter out underscore-prefixed keys and time from pino-http
+      // Filter out underscore-prefixed keys, time, and timestamp from pino-http
       const {
         context,
         time: _time,
@@ -41,15 +41,24 @@ if (logflareApiKey && logflareSourceToken) {
         },
       };
     },
-
     onError: (payload, err) => {
       console.error("Logflare error:", err);
     },
   });
-  logger = pino(stream);
+  // Use nullTime to disable timestamp generation at pino level
+  logger = pino(
+    {
+      timestamp: false,
+      redact: {
+        paths: ["timestamp"],
+        remove: true,
+      },
+    },
+    stream,
+  );
 } else {
-  // Default stdout JSON logger
-  logger = pino();
+  // Default stdout JSON logger - also disable timestamp
+  logger = pino({ timestamp: pino.stdTimeFunctions.nullTime });
 }
 
 export { logger };
