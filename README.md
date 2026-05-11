@@ -4,7 +4,7 @@ A local proxy server that enables AI coding tools to use the Minimax Token Plan 
 
 ## Features
 
-- **Dual API compatibility** - OpenAI (`/v1/chat/completions`) and Anthropic (`/anthropic/v1/messages`) endpoints
+- **Dual API compatibility** - OpenAI (`/openai/v1/chat/completions`) and Anthropic (`/anthropic/v1/messages`) endpoints
 - **Transparent proxy** - Pass-through requests with header filtering
 - **Security** - Helmet security headers, configurable CORS, rate limiting
 - **Observability** - Structured logging with Logflare support, request correlation IDs
@@ -47,24 +47,26 @@ The server starts on `http://localhost:7331` by default.
 ### Configure AI Tools
 
 **Anthropic-compatible (Claude Desktop, etc.):**
+
 ```
 API Endpoint: http://localhost:7331/anthropic/v1/messages
 API Key: sk-cp:your_minimax_key
 ```
 
 **OpenAI-compatible (Cursor, Windsurf, etc.):**
+
 ```
-API Endpoint: http://localhost:7331/v1/chat/completions
+API Endpoint: http://localhost:7331/openai/v1/chat/completions
 API Key: sk-cp:your_minimax_key
 ```
 
 ### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible proxy |
-| `POST` | `/anthropic/v1/messages` | Anthropic-compatible proxy |
+| Method | Path                          | Description                |
+| ------ | ----------------------------- | -------------------------- |
+| `GET`  | `/health`                     | Health check               |
+| `POST` | `/openai/v1/chat/completions` | OpenAI-compatible proxy    |
+| `POST` | `/anthropic/v1/messages`      | Anthropic-compatible proxy |
 
 ### Status Page
 
@@ -72,15 +74,15 @@ Open `http://localhost:7331` in your browser to see the status page. Polling aut
 
 ## Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 7331 | Server port |
-| `MINIMAX_API_KEY` | (required) | Minimax API key - fails startup if missing |
-| `CORS_ORIGIN` | `*` | CORS origins (comma-separated or `null` to disable) |
-| `RATE_LIMIT_MAX` | 100 | Max requests per window per IP |
-| `RATE_LIMIT_WINDOW_MS` | 900000 | Rate limit window (15 min default) |
-| `LOGFLARE_API_KEY` | - | Logflare API key for log streaming |
-| `LOGFLARE_SOURCE_TOKEN` | - | Logflare source token |
+| Variable                | Default    | Description                                         |
+| ----------------------- | ---------- | --------------------------------------------------- |
+| `PORT`                  | 7331       | Server port                                         |
+| `MINIMAX_API_KEY`       | (required) | Minimax API key - fails startup if missing          |
+| `CORS_ORIGIN`           | `*`        | CORS origins (comma-separated or `null` to disable) |
+| `RATE_LIMIT_MAX`        | 100        | Max requests per window per IP                      |
+| `RATE_LIMIT_WINDOW_MS`  | 900000     | Rate limit window (15 min default)                  |
+| `LOGFLARE_API_KEY`      | -          | Logflare API key for log streaming                  |
+| `LOGFLARE_SOURCE_TOKEN` | -          | Logflare source token                               |
 
 ## Security Notes
 
@@ -116,7 +118,7 @@ pkg install cloudflared
 cloudflared tunnel login
 
 # Create tunnel
-cloudflared tunnel create llm-proxy-termux
+cloudflared tunnel create <tunnel-name>
 
 # Create config file
 mkdir -p ~/.cloudflared
@@ -128,10 +130,10 @@ ingress:
 EOF
 
 # Route DNS
-cloudflared tunnel route dns llm-proxy-termux proxy.example.com
+cloudflared tunnel route dns <tunnel-name> proxy.example.com
 
 # Run tunnel in background
-nohup cloudflared tunnel run llm-proxy-termux > cloudflared.log 2>&1 &
+nohup cloudflared tunnel run <tunnel-name> > cloudflared.log 2>&1 &
 ```
 
 ### Build and Run
@@ -163,6 +165,6 @@ pkill cloudflared
 
 # Start everything after phone reboot
 cd ~/llm-proxy
-nohup cloudflared tunnel run llm-proxy-termux > cloudflared.log 2>&1 &
+nohup cloudflared tunnel run <tunnel-name> > cloudflared.log 2>&1 &
 pm2 start npm --name "llm-proxy" -- run prod
 ```
