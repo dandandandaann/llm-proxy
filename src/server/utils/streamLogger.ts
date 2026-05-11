@@ -97,7 +97,9 @@ export function extractAnthropicStreamingInfo(buffer: string): {
     }
 
     if (type === "message_delta") {
-      const msg = data.message as Record<string, unknown>;
+      const msg = data.message as Record<string, unknown> | undefined;
+      if (!msg) continue;
+
       const usage = msg.usage as Record<string, number> | undefined;
       const stopReason = msg.stop_reason as string | undefined;
 
