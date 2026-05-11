@@ -1,12 +1,20 @@
 import { Router } from "express";
 import { MINIMAX_API_KEY, MINIMAX_BASE_URL } from "../config.js";
-import { ANTHROPIC_ALLOWED_HEADERS } from "../utils/proxyUtils.js";
-import { extractAnthropicStreamingInfo } from "../utils/streamLogger.js";
-import { createProxyHandler } from "../utils/proxyLogger.js";
+import { ProxyError } from "../types.js";
+import {
+  filterHeaders,
+  ALLOWED_HEADERS,
+  ANTHROPIC_ALLOWED_HEADERS,
+  TIMEOUT_MS,
+} from "../utils/proxyUtils.js";
+import {
+  extractAnthropicStreamingInfo,
+  logStreamingResponse,
+} from "../utils/streamLogger.js";
+import { logger } from "../index.js";
 
 export const anthropicRouter = Router();
 
-// Shared auth logic
 function getAuthHeader(
   authHeader: string | undefined,
   xApiKey: string | undefined,
@@ -19,10 +27,12 @@ function getAuthHeader(
     providedKey = xApiKey;
   }
 
+  // Use the provided key only if it looks like a valid Minimax key
   if (providedKey && providedKey.startsWith("sk-cp")) {
     return `Bearer ${providedKey}`;
   }
 
+  // Fallback to the environment configuration
   if (MINIMAX_API_KEY) {
     return `Bearer ${MINIMAX_API_KEY}`;
   }
@@ -30,13 +40,13 @@ function getAuthHeader(
   return null;
 }
 
-// Anthropic /v1/messages
 anthropicRouter.post("/v1/messages", async (req, res) => {
   const authHeader = getAuthHeader(
     req.headers.authorization,
     req.headers["x-api-key"] as string,
   );
 
+  // No auth and no default key
   if (!authHeader) {
     res.status(401).json({
       error: {
@@ -48,59 +58,85 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
     return;
   }
 
-  const handler = createProxyHandler({
-    targetUrl: `${MINIMAX_BASE_URL}/v1/messages`,
-    allowedHeaders: ANTHROPIC_ALLOWED_HEADERS,
-    authHeader,
-    endpoint: "/anthropic/v1/messages",
-    extractStreamingInfo: (chunks: string[], reqBody?: Record<string, unknown>) => {
-      const buffer = chunks.join("");
-      const info = extractAnthropicStreamingInfo(buffer);
+  const targetUrl = `${MINIMAX_BASE_URL}/v1/messages`;
 
-      // Extract user prompt from messages array
-      // Anthropic content is an array of content blocks: [{type: "text", text: "..."}]
-      let input: string | undefined;
-      if (reqBody && Array.isArray(reqBody.messages)) {
-        const messages = reqBody.messages as Array<{ role: string; content: string | Array<Record<string, unknown>> }>;
-        // Find last user message
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i].role === "user") {
-            const content = messages[i].content;
-            if (typeof content === "string") {
-              input = content;
-            } else if (Array.isArray(content)) {
-              // Extract text from content blocks
-              input = content
-                .filter((block) => block.type === "text")
-                .map((block) => block.text as string)
-                .join("");
-            }
-            break;
-          }
-        }
+  // Build headers - only allowed ones
+  const headers = filterHeaders(req.headers, ANTHROPIC_ALLOWED_HEADERS);
+  headers["Authorization"] = authHeader;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const fetchRes = await fetch(targetUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(req.body),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    // Pass through status
+    res.status(fetchRes.status);
+
+    // Forward rate-limit headers from upstream
+    const ratelimitHeaders = [
+      "x-ratelimit-limit",
+      "x-ratelimit-remaining",
+      "x-ratelimit-reset",
+    ];
+    for (const header of ratelimitHeaders) {
+      const value = fetchRes.headers.get(header);
+      if (value) {
+        res.setHeader(header, value);
       }
+    }
 
-      return {
-        input,
-        text: info.text,
+    // Log response status based on status code
+    const logLevel =
+      fetchRes.status >= 500
+        ? "error"
+        : fetchRes.status >= 400
+          ? "warn"
+          : "info";
+    logger[logLevel](
+      {
+        endpoint: "/anthropic/v1/messages",
+        status: fetchRes.status,
+        statusText: fetchRes.statusText,
+      },
+      `${fetchRes.status} - ${fetchRes.statusText}`,
+    );
+
+    // Stream response back
+    if (fetchRes.body) {
+      let buffer = "";
+      const body = fetchRes.body as unknown as AsyncIterable<Uint8Array>;
+      for await (const chunk of body) {
+        const text = new TextDecoder().decode(chunk);
+        buffer += text;
+        res.write(chunk);
+      }
+      res.end();
+
+      // Log streaming response info
+      const info = extractAnthropicStreamingInfo(buffer);
+      logStreamingResponse("/anthropic/v1/messages", {
         contentSnippet: info.contentSnippet,
-        id: info.messageId,
-        model: info.model,
-        contentBlockType: info.contentBlockType,
-        stopReason: info.stopReason,
-        usage:
-          info.inputTokens != null || info.outputTokens != null
-            ? { inputTokens: info.inputTokens, outputTokens: info.outputTokens }
-            : undefined,
-      };
-    },
-  });
-
-  await handler(req, res);
+        inputTokens: info.inputTokens,
+        outputTokens: info.outputTokens,
+      });
+    } else {
+      res.end();
+    }
+  } catch (err: unknown) {
+    clearTimeout(timeout);
+    logger.error({ err }, "Runtime error");
+  }
 });
 
-// Models endpoints
-anthropicRouter.get("/v1/models", (_req, res) => {
+anthropicRouter.get("/v1/models", (req, res) => {
   res.json({
     type: "list",
     data: [
