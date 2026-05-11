@@ -85,6 +85,7 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
             "content-type": req.headers["content-type"] as string | undefined,
             "user-agent": req.headers["user-agent"] as string | undefined,
           },
+          userInput: req.body,
         },
       );
     } else {
@@ -103,6 +104,7 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
             "content-type": req.headers["content-type"] as string | undefined,
             "user-agent": req.headers["user-agent"] as string | undefined,
           },
+          userInput: req.body,
         },
       );
     }

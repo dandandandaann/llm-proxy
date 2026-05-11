@@ -66,10 +66,11 @@ app.use((req, res, next) => {
   next();
 });
 app.use(pinoHttp({
-  logger,
-  autoLogging: false, // We log manually with combined data
-  quietReqLogger: true,
-  quietResLogger: true,
+    logger,
+    autoLogging: false, // We log manually with combined data
+    quietReqLogger: true,
+    quietResLogger: true,
+    timestamp: false, // We use logTime instead
     customLogLevel: (_req, res, err) => {
       if (res.statusCode >= 500 || err) return "error";
       if (res.statusCode >= 400) return "warn";
@@ -81,9 +82,7 @@ app.use(pinoHttp({
     customErrorMessage: (_req, res, _err) => {
       return `${res.statusCode} - ${res.req.method} ${res.req.url}`;
     },
-    customProps: () => ({
-      pid: process.pid,
-    }),
+    customProps: () => ({}),
     serializers: {
       req: (req: {
         id: number;
@@ -98,34 +97,9 @@ app.use(pinoHttp({
         url: req.url,
         remoteAddress: req.remoteAddress,
         remotePort: req.remotePort,
-        headers: {
-          "x-correlation-id": req.headers["x-correlation-id"] as
-            | string
-            | undefined,
-          "content-type": req.headers["content-type"] as string | undefined,
-          "user-agent": req.headers["user-agent"] as string | undefined,
-          host: req.headers.host as string | undefined,
-        },
       }),
       res: (res: { statusCode: number; headers: Record<string, unknown> }) => ({
         statusCode: res.statusCode,
-        headers: {
-          "ratelimit-limit": res.headers["x-ratelimit-limit"] as
-            | string
-            | undefined,
-          "ratelimit-remaining": res.headers["x-ratelimit-remaining"] as
-            | string
-            | undefined,
-          "ratelimit-reset": res.headers["x-ratelimit-reset"] as
-            | string
-            | undefined,
-          "strict-transport-security": res.headers[
-            "strict-transport-security"
-          ] as string | undefined,
-          "x-correlation-id": res.headers["x-correlation-id"] as
-            | string
-            | undefined,
-        },
       }),
     },
     formatters: {

@@ -19,13 +19,15 @@ if (logflareApiKey && logflareSourceToken) {
         metadata: {
           context?: { host?: string; pid?: string };
           level?: string;
+          logTime?: string;
           [key: string]: unknown;
         };
       };
-      const { context, ...restMetadata } = item.metadata;
+      const { context, time: _time, ...restMetadata } = item.metadata;
       return {
         ...restMetadata,
         event_message: item.message,
+        logTime: item.metadata.logTime,
         host_info: {
           host: context?.host,
           pid: context?.pid ? Number(context.pid) : undefined,

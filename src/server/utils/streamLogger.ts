@@ -8,6 +8,80 @@ import { logger } from "./logger.js";
 // Maximum characters to log from response content (for fallback/trimming)
 const MAX_CONTENT_LOG = 500;
 
+// Sensitive fields to redact from user input
+const SENSITIVE_FIELDS = [
+  "password",
+  "secret",
+  "api_key",
+  "apikey",
+  "authorization",
+  "token",
+  "access_token",
+  "refresh_token",
+  "system", // System prompts can be large and repetitive
+  "tools", // Tool definitions are verbose
+  "top_k",
+  "top_p",
+];
+
+/**
+ * Extract the last user message from messages array.
+ * Returns only the content of the last message with role === "user".
+ */
+function extractLastUserMessage(
+  messages: Array<{ role?: string; content?: unknown }>,
+): string | undefined {
+  // Find last message where role is "user"
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user") {
+      if (typeof msg.content === "string") {
+        return msg.content;
+      }
+      if (Array.isArray(msg.content)) {
+        // For Anthropic format: [{type: "text", text: "..."}]
+        const textParts = msg.content
+          .filter((c) => c.type === "text")
+          .map((c) => (c as { text?: string }).text)
+          .filter(Boolean);
+        return textParts.join("\n");
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Sanitize an object by redacting sensitive fields.
+ * Recursively handles nested objects.
+ */
+function sanitizeInput(obj: unknown): unknown {
+  if (obj === null || obj === undefined) {
+    return undefined;
+  }
+
+  if (typeof obj !== "object") {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeInput);
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    const lowerKey = key.toLowerCase();
+    if (SENSITIVE_FIELDS.some((f) => lowerKey.includes(f))) {
+      sanitized[key] = "[REDACTED]";
+    } else if (typeof value === "object" && value !== null) {
+      sanitized[key] = sanitizeInput(value);
+    } else {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 // OpenAI completion tracking
 interface OpenAIPartialResponse {
   content: string;
@@ -242,26 +316,47 @@ export function logStreamingResponse(
       total_tokens: number;
     } | null;
     reqHeaders?: Record<string, string | undefined>;
+    userInput?: unknown;
   },
 ) {
   const logLevel = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
 
-  const timestamp = new Date().toLocaleTimeString();
+  const logTime = new Date().toISOString();
+
+  // Extract last user message from userInput.messages if available
+  let lastUserMessage: string | undefined;
+  const userInput = responseInfo.userInput as {
+    messages?: Array<{ role?: string; content?: unknown }>;
+    model?: string;
+    max_tokens?: number;
+    [key: string]: unknown;
+  } | null;
+  if (userInput?.messages) {
+    lastUserMessage = extractLastUserMessage(userInput.messages);
+  }
 
   const logData = {
     event_message: `${status} - ${method} ${endpoint}`,
-    timestamp,
+    logTime,
     request: {
       method,
       endpoint,
       headers: responseInfo.reqHeaders,
     },
+    userInput: lastUserMessage
+      ? { message: lastUserMessage }
+      : undefined,
+    model: userInput?.model,
     response: {
       statusCode: status,
       model: responseInfo.model ?? "null",
       finishReason:
         responseInfo.finishReason ?? responseInfo.stopReason ?? "null",
-      toolCalls: responseInfo.toolCalls?.length ? responseInfo.toolCalls : [],
+      contentSnippet:
+        responseInfo.contentSnippet.length > MAX_CONTENT_LOG
+          ? responseInfo.contentSnippet.slice(-MAX_CONTENT_LOG)
+          : responseInfo.contentSnippet,
+      toolCalls: responseInfo.toolCalls?.length ? responseInfo.toolCalls : undefined,
     },
     usage: responseInfo.usage ?? {
       inputTokens: responseInfo.inputTokens ?? "null",

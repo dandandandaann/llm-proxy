@@ -74,6 +74,7 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
             "content-type": req.headers["content-type"] as string | undefined,
             "user-agent": req.headers["user-agent"] as string | undefined,
           },
+          userInput: req.body,
         },
       );
     } else {
@@ -92,6 +93,7 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
             "content-type": req.headers["content-type"] as string | undefined,
             "user-agent": req.headers["user-agent"] as string | undefined,
           },
+          userInput: req.body,
         },
       );
     }
