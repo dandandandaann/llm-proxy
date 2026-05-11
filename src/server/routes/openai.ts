@@ -1,11 +1,12 @@
 import { Router } from "express";
 import {
   filterHeaders,
-  ALLOWED_HEADERS,
   forwardRateLimitHeaders,
   TIMEOUT_MS,
+  ALLOWED_HEADERS,
 } from "../utils/proxyUtils.js";
 import { getAuthHeader } from "../utils/authUtils.js";
+import { OPENAI_BASE_URL } from "../config.js";
 import {
   extractOpenAIStreamingInfo,
   logStreamingResponse,
@@ -28,7 +29,7 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
     return;
   }
 
-  const targetUrl = "https://api.minimax.io/v1/chat/completions";
+  const targetUrl = `${OPENAI_BASE_URL}/chat/completions`;
 
   const headers = filterHeaders(req.headers, ALLOWED_HEADERS);
   headers["Authorization"] = authHeader;

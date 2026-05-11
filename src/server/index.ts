@@ -18,9 +18,6 @@ declare global {
   }
 }
 
-// Rate limiter middleware
-console.log(parseInt(process.env.RATE_LIMIT_MAX || "100", 10));
-console.log(parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10));
 const rateLimiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX || "100", 10),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10), // 15 minutes

@@ -3,7 +3,6 @@
  */
 
 import { MINIMAX_API_KEY } from "../config.js";
-import { KEY_PREFIX } from "./proxyUtils.js";
 
 export interface AuthHeaderOptions {
   authHeader?: string;
@@ -24,10 +23,13 @@ export function getAuthHeader(options: AuthHeaderOptions): string | null {
     providedKey = options.xApiKey;
   }
 
-  if (providedKey?.startsWith(KEY_PREFIX)) {
+  // If a key is provided, use it (whether or not it has the expected prefix)
+  // The upstream API will validate if it's actually valid
+  if (providedKey) {
     return `Bearer ${providedKey}`;
   }
 
+  // Fall back to configured key
   if (MINIMAX_API_KEY) {
     return `Bearer ${MINIMAX_API_KEY}`;
   }

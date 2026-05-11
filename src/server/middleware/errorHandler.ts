@@ -20,25 +20,14 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
+  const correlationId = req.headers["x-correlation-id"] as string | undefined;
   const statusCode = err.statusCode || 500;
   const message = statusCode >= 500 ? "Server Error" : err.message;
-
-  // Log error with redacted auth header via pino (goes to Logflare)
-  const authHeader = req.headers.authorization;
-  //   logger.error(
-  //     {
-  //       req: {
-  //         method: req.method,
-  //         url: req.path,
-  //         headers: { authorization: redactAuthHeader(authHeader) },
-  //       },
-  //     },
-  //     `[ERROR] ${req.method} ${req.path} - ${statusCode} - ${message}`,
-  //   );
 
   res.status(statusCode).json({
     error: message,
     status: statusCode,
+    ...(correlationId && { correlationId }),
   });
 }
 

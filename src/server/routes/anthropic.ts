@@ -57,14 +57,14 @@ anthropicRouter.post("/v1/messages", async (req, res) => {
 
     // Stream response back
     if (fetchRes.body) {
-      let buffer = "";
+      const textChunks: string[] = [];
       const body = fetchRes.body as unknown as AsyncIterable<Uint8Array>;
       for await (const chunk of body) {
-        const text = new TextDecoder().decode(chunk);
-        buffer += text;
+        textChunks.push(new TextDecoder().decode(chunk));
         res.write(chunk);
       }
       res.end();
+      const buffer = textChunks.join('');
 
       const info = extractAnthropicStreamingInfo(buffer);
       logStreamingResponse(

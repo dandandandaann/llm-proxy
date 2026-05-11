@@ -8,10 +8,7 @@ if (!process.env.MINIMAX_API_KEY) {
 const PORT = parseInt(process.env.PORT || '7331', 10);
 const MINIMAX_API_KEY = process.env.MINIMAX_API_KEY;
 const MINIMAX_BASE_URL = 'https://api.minimax.io/anthropic';
+const OPENAI_BASE_URL = 'https://api.minimax.io/v1';
 
-const ALLOWED_HEADERS = ['content-type'];
-const ANTHROPIC_ALLOWED_HEADERS = ['content-type', 'anthropic-version', 'anthropic-beta', 'x-api-key'];
-const TIMEOUT_MS = 60000;
-const KEY_PREFIX = 'sk-cp';
-
-export { PORT, MINIMAX_API_KEY, MINIMAX_BASE_URL, ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS, KEY_PREFIX };
+export { PORT, MINIMAX_API_KEY, MINIMAX_BASE_URL, OPENAI_BASE_URL };
+export { ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS, KEY_PREFIX } from "./utils/proxyUtils.js";

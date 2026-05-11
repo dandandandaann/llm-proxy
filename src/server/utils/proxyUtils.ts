@@ -2,8 +2,6 @@
  * Shared proxy utility functions and constants
  */
 
-// import { logger } from "../index.js";
-
 // Allowed headers for OpenAI route
 export const ALLOWED_HEADERS = ["content-type"];
 
@@ -39,24 +37,6 @@ export function forwardRateLimitHeaders(
       clientRes.setHeader(header, value);
     }
   }
-}
-
-/**
- * Log proxy response based on status code (info/warn/error).
- * Uses root logger for flat structure.
- */
-export function logProxyResponse(
-  endpoint: string,
-  status: number,
-  statusText: string,
-): void {
-  const logLevel = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
-  const logData = {
-    event_message: `${status} - ${statusText}`,
-    status,
-    statusText,
-  };
-  //   logger[logLevel](logData);
 }
 
 /**
