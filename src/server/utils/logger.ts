@@ -13,6 +13,7 @@ if (logflareApiKey && logflareSourceToken) {
   const stream = createWriteStream({
     apiKey: logflareApiKey,
     sourceToken: logflareSourceToken,
+
     onPreparePayload: (payload, meta) => {
       const item = defaultPreparePayload(payload, meta) as {
         message?: string;
@@ -23,7 +24,13 @@ if (logflareApiKey && logflareSourceToken) {
           [key: string]: unknown;
         };
       };
-      const { context, time: _time, ...restMetadata } = item.metadata;
+      // Filter out underscore-prefixed keys and time from pino-http
+      const {
+        context,
+        time: _time,
+        timestamp: _timestamp,
+        ...restMetadata
+      } = item.metadata;
       return {
         ...restMetadata,
         event_message: item.message,
@@ -33,6 +40,10 @@ if (logflareApiKey && logflareSourceToken) {
           pid: context?.pid ? Number(context.pid) : undefined,
         },
       };
+    },
+
+    onError: (payload, err) => {
+      console.error("Logflare error:", err);
     },
   });
   logger = pino(stream);
