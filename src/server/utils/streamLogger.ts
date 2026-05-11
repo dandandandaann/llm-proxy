@@ -8,22 +8,6 @@ import { logger } from "./logger.js";
 // Maximum characters to log from response content (for fallback/trimming)
 const MAX_CONTENT_LOG = 500;
 
-// Sensitive fields to redact from user input
-const SENSITIVE_FIELDS = [
-  "password",
-  "secret",
-  "api_key",
-  "apikey",
-  "authorization",
-  "token",
-  "access_token",
-  "refresh_token",
-  "system", // System prompts can be large and repetitive
-  "tools", // Tool definitions are verbose
-  "top_k",
-  "top_p",
-];
-
 /**
  * Extract the last user message from messages array.
  * Returns only the content of the last message with role === "user".
@@ -49,57 +33,6 @@ function extractLastUserMessage(
     }
   }
   return undefined;
-}
-
-/**
- * Sanitize an object by redacting sensitive fields.
- * Recursively handles nested objects.
- */
-function sanitizeInput(obj: unknown): unknown {
-  if (obj === null || obj === undefined) {
-    return undefined;
-  }
-
-  if (typeof obj !== "object") {
-    return obj;
-  }
-
-  if (Array.isArray(obj)) {
-    return obj.map(sanitizeInput);
-  }
-
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    const lowerKey = key.toLowerCase();
-    if (SENSITIVE_FIELDS.some((f) => lowerKey.includes(f))) {
-      sanitized[key] = "[REDACTED]";
-    } else if (typeof value === "object" && value !== null) {
-      sanitized[key] = sanitizeInput(value);
-    } else {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
-}
-
-// OpenAI completion tracking
-interface OpenAIPartialResponse {
-  content: string;
-  finishReason: string | null;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  } | null;
-}
-
-// Anthropic event tracking
-interface AnthropicPartialResponse {
-  content: string;
-  model: string | null;
-  stopReason: string | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
 }
 
 /**

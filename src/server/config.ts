@@ -11,4 +11,4 @@ const MINIMAX_BASE_URL = 'https://api.minimax.io/anthropic';
 const OPENAI_BASE_URL = 'https://api.minimax.io/v1';
 
 export { PORT, MINIMAX_API_KEY, MINIMAX_BASE_URL, OPENAI_BASE_URL };
-export { ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS, KEY_PREFIX } from "./utils/proxyUtils.js";
+export { ALLOWED_HEADERS, ANTHROPIC_ALLOWED_HEADERS, TIMEOUT_MS } from "./utils/proxyUtils.js";

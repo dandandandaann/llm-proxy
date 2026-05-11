@@ -65,7 +65,7 @@ openaiRouter.post("/v1/chat/completions", async (req, res) => {
         fetchRes.status,
         fetchRes.statusText,
         req.method,
-        "/openai/v1/chat/completions",
+        "/v1/chat/completions",
         Date.now() - (req.startTime ?? Date.now()),
         {
           ...info,
